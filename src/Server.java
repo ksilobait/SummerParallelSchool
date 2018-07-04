@@ -18,7 +18,7 @@ public class Server implements Runnable {
 	private Map<SocketChannel, InetAddress> hostIPs = new HashMap<>();
 	private Map<SocketChannel, ConnectionState> hostStates = new HashMap<>();
 
-	public Server(String ip, int port) throws UnknownHostException {
+	private Server(String ip, int port) throws UnknownHostException {
 		this.serverIP = InetAddress.getByName(ip);
 		this.serverPort = port;
 		new Thread(this).start();
@@ -58,7 +58,7 @@ public class Server implements Runnable {
 						hostPorts.put(socketChannel, newSocket.getPort());
 						hostStates.put(socketChannel, ConnectionState.UNKNOWN);
 
-						System.out.println(">>accepting new connection from " + newSocket.getInetAddress() + ":" + newSocket.getPort());
+						System.out.println(">>accepting new connection from " + newSocket.getInetAddress().getHostAddress() + ":" + newSocket.getPort());
 					} else if (key.isReadable()) {
 						//socket received new data
 
@@ -68,12 +68,25 @@ public class Server implements Runnable {
 						socketChannel.read(byteBuffer);
 						byteBuffer.flip();
 
-						CharBuffer charBuffer = Charset.forName("US-ASCII").decode(byteBuffer);
+						CharBuffer charBuffer = Charset.forName("UTF-8").decode(byteBuffer);
 						String message = charBuffer.toString();
+						if (message.isEmpty()) {
+							//disconnected
+							System.out.println("client " + hostIPs.get(socketChannel).getHostAddress() + ":" + hostPorts.get(socketChannel) + " disconnected");
+							hostStates.remove(socketChannel);
+							hostPorts.remove(socketChannel);
+							hostIPs.remove(socketChannel);
+							socketChannel.close();
+						} else {
+							String[] messages = message.split("\r\n");
+							for (String msg : messages) {
+								processMessage(msg, socketChannel, selector);
+								if (socketChannel.isOpen()) {
+									socketChannel.register(selector, SelectionKey.OP_READ); //wait for incoming data
+								}
+							}
+						}
 
-						processMessage(message, socketChannel);
-
-						socketChannel.register(selector, SelectionKey.OP_READ); //wait for incoming data
 					}
 					keyIterator.remove();
 				}
@@ -83,8 +96,18 @@ public class Server implements Runnable {
 		}
 	}
 
-	private void processMessage(String message, SocketChannel socketChannel) throws IOException {
+	private void processMessage(String message, SocketChannel socketChannel, Selector selector) throws IOException {
 		try {
+			if (message.isEmpty()) {
+				//disconnected
+				System.out.println("client " + hostIPs.get(socketChannel).getHostAddress() + ":" + hostPorts.get(socketChannel) + " disconnected");
+				hostStates.remove(socketChannel);
+				hostPorts.remove(socketChannel);
+				hostIPs.remove(socketChannel);
+				socketChannel.close();
+				return;
+			}
+
 			String[] parsedMessage = message.trim().split(" ");
 			if (parsedMessage[0].equals("init")) {
 				if (hostStates.get(socketChannel).equals(ConnectionState.UNKNOWN)) {
@@ -104,28 +127,31 @@ public class Server implements Runnable {
 				hostStates.put(socketChannel, ConnectionState.PERSON);
 			}
 
-			System.out.println("!!!" + message);
+			System.out.println(">>received \"" + message.trim() + "\"");
 			switch (parsedMessage[0]) {
 				case "connect": {
 					for (int i = 1; i < parsedMessage.length - 1; i += 2) {
 						InetAddress ip = InetAddress.getByName(parsedMessage[i]);
 						int port = Integer.valueOf(parsedMessage[i + 1]);
-						System.out.println("Try to connect with " + ip + " " + port);
-						connect(new MyInetStruct(ip, port));
+						System.out.println(">>Connecting with " + ip.getHostAddress() + " " + port);
+						connect(new MyInetStruct(ip, port), selector);
 					}
 					break;
 				}
 				case "conn_net": {
-					//TODO
 					InetAddress ip = InetAddress.getByName(parsedMessage[1]);
 					int port = Integer.valueOf(parsedMessage[2]);
-					conn_net(new MyInetStruct(ip, port));
+					MyInetStruct remote = new MyInetStruct(ip, port);
+					connect(remote, selector);
+					conn_net(remote);
 					break;
 				}
 				case "request_hosts": {
 					InetAddress ip = InetAddress.getByName(parsedMessage[1]);
 					int port = Integer.valueOf(parsedMessage[2]);
-					request_hosts(new MyInetStruct(ip, port));
+					MyInetStruct remote = new MyInetStruct(ip, port);
+					connect(remote, selector);
+					request_hosts(remote);
 					break;
 				}
 				case "print_hosts":
@@ -135,14 +161,17 @@ public class Server implements Runnable {
 					print_hosts2(socketChannel);
 					break;
 				case "exit":
-					myExit();
+					hostStates.remove(socketChannel);
+					hostPorts.remove(socketChannel);
+					hostIPs.remove(socketChannel);
+					socketChannel.close();
 					break;
 				default:
-					System.out.println("Illegal command!");
+					System.err.println("illegal command");
 					break;
 			}
 		} catch (IndexOutOfBoundsException e) {
-			System.err.println(e.getMessage());
+			e.printStackTrace();
 		}
 	}
 
@@ -167,10 +196,19 @@ public class Server implements Runnable {
 			buffer.clear();
 			buffer.put(response.getBytes());
 			buffer.flip();
-
 			while (buffer.hasRemaining()) {
 				socketChannel.write(buffer);
 			}
+		}
+
+		//write itself
+		String response = serverIP.getHostAddress() + " " + serverPort + "\n";
+		ByteBuffer buffer = ByteBuffer.allocate(1024);
+		buffer.clear();
+		buffer.put(response.getBytes());
+		buffer.flip();
+		while (buffer.hasRemaining()) {
+			socketChannel.write(buffer);
 		}
 	}
 
@@ -189,8 +227,8 @@ public class Server implements Runnable {
 	}
 
 	private void conn_net(MyInetStruct struct) throws IOException {
-		StringBuilder response = new StringBuilder("request_hosts "+serverIP.getHostAddress()+" "+serverPort);
-		System.out.println(">>I'll send " + response);
+		StringBuilder response = new StringBuilder("request_hosts " + serverIP.getHostAddress() + " " + serverPort + "\r\n");
+		System.out.println(">>I'll send \"" + response.toString().trim() + "\" in conn_net");
 
 		ByteBuffer buffer = ByteBuffer.allocate(1024);
 		buffer.clear();
@@ -230,13 +268,15 @@ public class Server implements Runnable {
 		if (response.toString().equals("connect")) {
 			return;
 		}
+		response.append("\r\n");
 
-		System.out.println(">>I'll send " + response);
+		System.out.println(">>I'll send \"" + response + "\" in request_hosts");
 		//TODO: new connection or find existent
 		SocketChannel destination = null;
 		for (SocketChannel channel : hostIPs.keySet()) {
 			if (hostIPs.get(channel).equals(struct.ip) && hostPorts.get(channel).equals(struct.port)) {
 				destination = channel;
+				System.out.println("selected " + destination + "because of " + struct.ip + " " + struct.port);
 				break;
 			}
 		}
@@ -255,10 +295,7 @@ public class Server implements Runnable {
 		}
 	}
 
-	private void connect(MyInetStruct remote) throws IOException {
-		SocketAddress address = new InetSocketAddress(remote.ip, remote.port);
-		SocketChannel client = SocketChannel.open(address);
-
+	private void connect(MyInetStruct remote, Selector selector) throws IOException {
 		if (serverIP.equals(remote.ip) && serverPort == remote.port) {
 			return;
 		}
@@ -269,10 +306,15 @@ public class Server implements Runnable {
 			}
 		}
 
+		SocketAddress address = new InetSocketAddress(remote.ip, remote.port);
+		SocketChannel client = SocketChannel.open(address);
+		client.configureBlocking(false);
+		client.register(selector, SelectionKey.OP_READ); //listen for incoming connections
+
 		//send init
 		ByteBuffer buffer = ByteBuffer.allocate(1024);
 		buffer.clear();
-		buffer.put(("init " + this.serverIP.getHostAddress() + " " + this.serverPort).getBytes());
+		buffer.put(("init " + this.serverIP.getHostAddress() + " " + this.serverPort + "\r\n").getBytes());
 		buffer.flip();
 
 		while (buffer.hasRemaining()) {
@@ -285,14 +327,11 @@ public class Server implements Runnable {
 
 	}
 
-	private void myExit() {
-		//TODO
-	}
-
 	public static void main(String[] args) throws UnknownHostException {
 		System.out.println("Please enter your ip and port:");
 		Scanner scanner = new Scanner(System.in);
 		//String ip = scanner.nextLine();
+		//String ip = "192.168.12.31";
 		String ip = "localhost";
 		int port = scanner.nextInt();
 		new Server(ip, port);
