@@ -1,3 +1,5 @@
+import javafx.util.Pair;
+
 import java.io.IOException;
 import java.net.*;
 import java.nio.ByteBuffer;
@@ -5,18 +7,73 @@ import java.nio.CharBuffer;
 import java.nio.channels.*;
 import java.nio.charset.Charset;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class Server implements Runnable {
 	private InetAddress serverIP;
 	private int serverPort;
+	private AtomicInteger minUnusedLocalID;
+	private Map<String, Pair<String, String>> names;
+
+	public native void cLaunchMethod(String dll, String codeName, String[] args);
+	static {
+		System.load("/home/ruslan/Kraken/SummerParallelSchool/dlls/libSample.so");
+	}
 
 	private enum ConnectionState {
 		UNKNOWN, DEFAULT, SIMPLE, SELF
 	}
 
-	private Map<SocketChannel, Integer> hostPorts = new HashMap<>();
-	private Map<SocketChannel, InetAddress> hostIPs = new HashMap<>();
-	private Map<SocketChannel, ConnectionState> hostStates = new HashMap<>();
+	class ConnectionInfo {
+		SocketChannel channel;
+		InetAddress ip;
+		int port;
+		int localID;
+		ConnectionState state;
+
+		ConnectionInfo(SocketChannel channel, InetAddress ip, int port, int localID, ConnectionState state) {
+			this.channel = channel;
+			this.ip = ip;
+			this.port = port;
+			this.localID = localID;
+			this.state = state;
+		}
+	}
+	private List<ConnectionInfo> hostsConnections = new LinkedList<>();
+
+	class GCID {
+		InetAddress ip;
+		int port;
+		int lcid;
+
+		@Override
+		public String toString() {
+			return ip.getHostAddress() + " " + port + " " + lcid + " ";
+		}
+	}
+
+	private class ExtendedHostInfo {
+		ExtendedHostInfo(InetAddress ip, int port, ConnectionState state) {
+			this.ip = ip;
+			this.port = port;
+			this.state = state;
+		}
+
+		InetAddress ip;
+		int port;
+		ConnectionState state;
+	}
+
+
+	private class HostInfo {
+		HostInfo(InetAddress ip, int port) {
+			this.ip = ip;
+			this.port = port;
+		}
+
+		InetAddress ip;
+		int port;
+	}
 
 	private Set<String> dictionary = new HashSet<>();
 
@@ -27,22 +84,17 @@ public class Server implements Runnable {
 		this.dictionary.add("print_hosts");
 		this.dictionary.add("print_hosts2");
 		this.dictionary.add("exit");
+		this.dictionary.add("kill");
+
+		this.dictionary.add("import");
+		this.dictionary.add("exec");
+
+		minUnusedLocalID = new AtomicInteger(0);
+		names = new HashMap<>();
 
 		this.serverIP = InetAddress.getByName(ip);
 		this.serverPort = port;
 		new Thread(this).start();
-	}
-
-	class GCID
-	{
-		InetAddress ip;
-		int port;
-		int lcid;
-
-		@Override
-		public String toString() {
-			return ip.getHostAddress() + " " + port + " " + lcid + " ";
-		}
 	}
 
 	@Override
@@ -75,9 +127,7 @@ public class Server implements Runnable {
 						socketChannel.configureBlocking(false);
 						socketChannel.register(selector, SelectionKey.OP_READ); //wait for incoming data
 
-						hostIPs.put(socketChannel, newSocket.getInetAddress());
-						hostPorts.put(socketChannel, newSocket.getPort());
-						hostStates.put(socketChannel, ConnectionState.UNKNOWN);
+						hostsConnections.add(new ConnectionInfo(socketChannel, newSocket.getInetAddress(), newSocket.getPort(), Integer.MIN_VALUE, ConnectionState.UNKNOWN));
 
 						System.out.println(">>accepting new connection from " + newSocket.getInetAddress().getHostAddress() + ":" + newSocket.getPort());
 					} else if (key.isReadable()) {
@@ -111,69 +161,89 @@ public class Server implements Runnable {
 		try {
 			if (message.isEmpty()) {
 				//disconnected
-				System.out.println("client " + hostIPs.get(socketChannel).getHostAddress() + ":" + hostPorts.get(socketChannel) + " disconnected");
-				hostStates.remove(socketChannel);
-				hostPorts.remove(socketChannel);
-				hostIPs.remove(socketChannel);
+				hostsConnections.removeIf(info -> info.channel.equals(socketChannel));
+				System.out.println("client " + socketChannel.getRemoteAddress() + " disconnected");
 				socketChannel.close();
 				return;
 			}
 
 			String[] parsedMessage = message.trim().split(" ");
+			System.out.println(">>received \"" + message.trim() + "\"");
 
 			if (parsedMessage[0].equals("init")) {
-				if (hostStates.get(socketChannel).equals(ConnectionState.UNKNOWN)) {
-					InetAddress ip = InetAddress.getByName(parsedMessage[1]);
-					int port = Integer.valueOf(parsedMessage[2]);
+				for (ConnectionInfo info : hostsConnections) {
+					if (info.channel.equals(socketChannel)) {
+						if (info.state.equals(ConnectionState.UNKNOWN)) {
+							InetAddress ip = InetAddress.getByName(parsedMessage[1]);
+							int port = Integer.valueOf(parsedMessage[2]);
 
-					hostStates.put(socketChannel, ConnectionState.DEFAULT);
-					hostIPs.put(socketChannel, ip);
-					hostPorts.put(socketChannel, port);
-				} else {
-					hostStates.put(socketChannel, ConnectionState.SIMPLE);
+							info.ip = ip;
+							info.port = port;
+							info.state = ConnectionState.DEFAULT;
+						} else {
+							System.err.println(">>init is not available anymore");
+							info.state = ConnectionState.SIMPLE;
+						}
+						break;
+					}
 				}
 				return;
 			}
 
-			if (hostStates.get(socketChannel).equals(ConnectionState.UNKNOWN)) {
-				hostStates.put(socketChannel, ConnectionState.SIMPLE);
+			//not an init message
+
+			for (ConnectionInfo info : hostsConnections) {
+				if (info.channel.equals(socketChannel) && info.state.equals(ConnectionState.UNKNOWN)) {
+					info.state = ConnectionState.SIMPLE;
+					info.localID = minUnusedLocalID.getAndIncrement();
+					break;
+				}
 			}
 
-
-			int index = 0;
+			//check if there is gcid
+			int shift = 0;
 			GCID gcid = null;
-
-			if (hostStates.get(socketChannel).equals(ConnectionState.DEFAULT) && parsedMessage[2].matches("[0-9]+") && parsedMessage[1].matches("[0-9]+")) {
+			if (parsedMessage.length > 2 && parsedMessage[1].matches("[0-9]+") && parsedMessage[2].matches("[0-9]+")) { //port and lcid
 				gcid = new GCID();
 				gcid.ip = InetAddress.getByName(parsedMessage[0]);
 				gcid.port = Integer.valueOf(parsedMessage[1]);
 				gcid.lcid = Integer.valueOf(parsedMessage[2]);
-				index = 3;
+				shift = 3;
+			} else {
+				for (ConnectionInfo info : hostsConnections) {
+					if (info.channel.equals(socketChannel) && info.state.equals(ConnectionState.SIMPLE)) {
+						gcid = new GCID();
+						gcid.ip = info.ip;
+						gcid.port = info.port;
+						gcid.lcid = info.localID;
+						break;
+					}
+				}
+
 			}
 
-			System.out.println(">>received \"" + message.trim() + "\"");
-			switch (parsedMessage[index]) {
+			switch (parsedMessage[shift]) {
 				case "connect": {
-					for (int i = index + 1; i < parsedMessage.length - 1; i += 2) {
+					for (int i = shift + 1; i < parsedMessage.length - 1; i += 2) {
 						InetAddress ip = InetAddress.getByName(parsedMessage[i]);
 						int port = Integer.valueOf(parsedMessage[i + 1]);
-						System.out.println(">>Connecting with " + ip.getHostAddress() + " " + port);
-						connect(new MyInetStruct(ip, port), selector);
+						connect(new HostInfo(ip, port), selector);
 					}
 					break;
 				}
 				case "conn_net": {
-					InetAddress ip = InetAddress.getByName(parsedMessage[index + 1]);
-					int port = Integer.valueOf(parsedMessage[index + 2]);
-					MyInetStruct remote = new MyInetStruct(ip, port);
+					InetAddress ip = InetAddress.getByName(parsedMessage[shift + 1]);
+					int port = Integer.valueOf(parsedMessage[shift + 2]);
+					HostInfo remote = new HostInfo(ip, port);
+
 					connect(remote, selector);
 					conn_net(remote, gcid);
 					break;
 				}
 				case "request_hosts": {
-					InetAddress ip = InetAddress.getByName(parsedMessage[index + 1]);
-					int port = Integer.valueOf(parsedMessage[index + 2]);
-					MyInetStruct remote = new MyInetStruct(ip, port);
+					InetAddress ip = InetAddress.getByName(parsedMessage[shift + 1]);
+					int port = Integer.valueOf(parsedMessage[shift + 2]);
+					HostInfo remote = new HostInfo(ip, port);
 					connect(remote, selector);
 					request_hosts(remote, gcid);
 					break;
@@ -185,11 +255,31 @@ public class Server implements Runnable {
 					print_hosts2(socketChannel);
 					break;
 				case "exit":
-					hostStates.remove(socketChannel);
-					hostPorts.remove(socketChannel);
-					hostIPs.remove(socketChannel);
+					hostsConnections.removeIf(host -> host.channel.equals(socketChannel));
 					socketChannel.close();
 					break;
+				case "kill":
+					System.exit(0);
+					break;
+
+				// LEVEL 2
+				case "import": {
+					String newName = parsedMessage[shift + 1];
+					String dll = parsedMessage[shift + 2];
+					String codeName = parsedMessage[shift + 3];
+					names.put(newName, new Pair<>(dll, codeName));
+				}
+
+				case "exec": {
+					String newName = parsedMessage[shift + 1];
+
+					String dll = names.get(newName).getKey();
+					String codeName = names.get(newName).getValue();
+					List<String> args = new ArrayList<>(Arrays.asList(parsedMessage).subList(shift + 2, parsedMessage.length));
+					cLaunchMethod(dll, codeName, (String[]) args.toArray());
+					break;
+				}
+
 				default:
 					System.err.println(">>invalid command");
 					String response = "illegal command; valid commands: " + String.join(", ", dictionary) + "\n";
@@ -215,23 +305,20 @@ public class Server implements Runnable {
 		}
 	}
 
-	private class MyInetStruct {
-		MyInetStruct(InetAddress ip, int port) {
-			this.ip = ip;
-			this.port = port;
-		}
-
-		InetAddress ip;
-		int port;
-	}
-
 	private void print_hosts(SocketChannel socketChannel) throws IOException {
-		for (SocketChannel channel : hostIPs.keySet()) {
-			if (!hostStates.get(channel).equals(ConnectionState.DEFAULT)) {
+		Set<HostInfo> hosts = new HashSet<>();
+		hosts.add(new HostInfo(serverIP, serverPort)); //itself
+
+		for (ConnectionInfo host : hostsConnections) {
+			if (!host.state.equals(ConnectionState.DEFAULT)) {
 				continue;
 			}
 
-			String response = hostIPs.get(channel).getHostAddress() + " " + hostPorts.get(channel) + "\n";
+			hosts.add(new HostInfo(host.ip, host.port));
+		}
+
+		for (HostInfo host : hosts) {
+			String response = host.ip.getHostAddress() + " " + host.port + "\n";
 			ByteBuffer buffer = ByteBuffer.allocate(1024);
 			buffer.clear();
 			buffer.put(response.getBytes());
@@ -240,21 +327,16 @@ public class Server implements Runnable {
 				socketChannel.write(buffer);
 			}
 		}
-
-		//write itself
-		String response = serverIP.getHostAddress() + " " + serverPort + "\n";
-		ByteBuffer buffer = ByteBuffer.allocate(1024);
-		buffer.clear();
-		buffer.put(response.getBytes());
-		buffer.flip();
-		while (buffer.hasRemaining()) {
-			socketChannel.write(buffer);
-		}
 	}
 
 	private void print_hosts2(SocketChannel socketChannel) throws IOException {
-		for (SocketChannel channel : hostIPs.keySet()) {
-			String response = hostIPs.get(channel).getHostAddress() + ":" + hostPorts.get(channel) + " " + hostStates.get(channel) + "\n";
+		Set<ExtendedHostInfo> hosts = new HashSet<>();
+		for (ConnectionInfo host : hostsConnections) {
+			hosts.add(new ExtendedHostInfo(host.ip, host.port, host.state));
+		}
+
+		for (ExtendedHostInfo host : hosts) {
+			String response = host.ip.getHostAddress() + ":" + host.port + " " + host.state + "\n";
 			ByteBuffer buffer = ByteBuffer.allocate(1024);
 			buffer.clear();
 			buffer.put(response.getBytes());
@@ -276,7 +358,7 @@ public class Server implements Runnable {
 		}
 	}
 
-	private void conn_net(MyInetStruct struct, GCID gcid) throws IOException {
+	private void conn_net(HostInfo struct, GCID gcid) throws IOException {
 		StringBuilder response = new StringBuilder();
 		if (gcid != null) {
 			response.append(gcid.toString());
@@ -290,9 +372,9 @@ public class Server implements Runnable {
 		buffer.flip();
 
 		SocketChannel destination = null;
-		for (SocketChannel channel : hostIPs.keySet()) {
-			if (hostIPs.get(channel).equals(struct.ip) && hostPorts.get(channel).equals(struct.port)) {
-				destination = channel;
+		for (ConnectionInfo host : hostsConnections) {
+			if (host.ip.equals(struct.ip) && host.port== struct.port) {
+				destination = host.channel;
 				break;
 			}
 		}
@@ -304,25 +386,21 @@ public class Server implements Runnable {
 		while (buffer.hasRemaining()) {
 			destination.write(buffer);
 		}
-
 	}
 
-	private void request_hosts(MyInetStruct struct, GCID gcid) throws IOException {
+	private void request_hosts(HostInfo struct, GCID gcid) throws IOException {
 		StringBuilder response = new StringBuilder();
 		if (gcid != null) {
 			response.append(gcid.toString());
 		}
 		response.append("connect");
 
-		for (SocketChannel channel : hostIPs.keySet()) {
-			if (!hostStates.get(channel).equals(ConnectionState.DEFAULT)) {
+		for (ConnectionInfo host : hostsConnections) {
+			if (!host.state.equals(ConnectionState.DEFAULT)) {
 				continue;
 			}
 
-			response.append(" ")
-					.append(hostIPs.get(channel).getHostAddress())
-					.append(" ")
-					.append(hostPorts.get(channel));
+			response.append(" ").append(host.ip.getHostAddress()).append(" ").append(host.port);
 		}
 		if (response.toString().equals("connect") || (gcid != null && response.toString().equals(gcid.toString() + " connect"))) {
 			return;
@@ -331,10 +409,10 @@ public class Server implements Runnable {
 
 		System.out.println(">>I'll send \"" + response.toString().trim() + "\" in request_hosts");
 		SocketChannel destination = null;
-		for (SocketChannel channel : hostIPs.keySet()) {
-			if (hostIPs.get(channel).equals(struct.ip) && hostPorts.get(channel).equals(struct.port)) {
-				destination = channel;
-				System.out.println("selected " + destination + "because of " + struct.ip + " " + struct.port);
+		for (ConnectionInfo host : hostsConnections) {
+			if (host.ip.equals(struct.ip) && host.port == struct.port) {
+				destination = host.channel;
+				System.out.println("selected " + destination + " because of " + struct.ip + " " + struct.port);
 				break;
 			}
 		}
@@ -353,44 +431,44 @@ public class Server implements Runnable {
 		}
 	}
 
-	private void connect(MyInetStruct remote, Selector selector) throws IOException {
-		if (serverIP.equals(remote.ip) && serverPort == remote.port) {
+	private void connect(HostInfo connectTo, Selector selector) throws IOException {
+		if (serverIP.equals(connectTo.ip) && serverPort == connectTo.port) {
 			return;
 		}
 
-		for (SocketChannel channel : hostIPs.keySet()) {
-			if (hostIPs.get(channel).equals(remote.ip) && (hostPorts.get(channel).equals(remote.port))) {
+		for (ConnectionInfo host : hostsConnections) {
+			if (host.ip.equals(connectTo.ip) && (host.port == connectTo.port)) {
 				return;
 			}
 		}
 
-		SocketAddress address = new InetSocketAddress(remote.ip, remote.port);
+		System.out.println(">>Connecting with " + connectTo.ip.getHostAddress() + " " + connectTo.port);
+
+		SocketAddress address = new InetSocketAddress(connectTo.ip, connectTo.port);
 		SocketChannel client = SocketChannel.open(address);
 		client.configureBlocking(false);
 		client.register(selector, SelectionKey.OP_READ); //listen for incoming connections
 
 		//send init
+		String message = "init " + this.serverIP.getHostAddress() + " " + this.serverPort + "\r\n";
+		System.out.println(">>I'll send \"" + message.trim() + "\" in connect");
 		ByteBuffer buffer = ByteBuffer.allocate(1024);
 		buffer.clear();
-		buffer.put(("init " + this.serverIP.getHostAddress() + " " + this.serverPort + "\r\n").getBytes());
+		buffer.put(message.getBytes());
 		buffer.flip();
-
 		while (buffer.hasRemaining()) {
 			client.write(buffer);
 		}
 
-		hostStates.put(client, ConnectionState.DEFAULT);
-		hostIPs.put(client, remote.ip);
-		hostPorts.put(client, remote.port);
-
+		hostsConnections.add(new ConnectionInfo(client, connectTo.ip, connectTo.port, minUnusedLocalID.getAndIncrement(), ConnectionState.DEFAULT));
 	}
 
 	public static void main(String[] args) throws UnknownHostException {
 		System.out.println("Please enter your ip and port:");
 		Scanner scanner = new Scanner(System.in);
 		//String ip = scanner.nextLine();
-		String ip = "192.168.12.31";
-		//String ip = "localhost";
+		//String ip = "192.168.12.31";
+		String ip = "localhost";
 		int port = scanner.nextInt();
 		new Server(ip, port);
 	}
