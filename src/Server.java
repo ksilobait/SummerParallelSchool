@@ -1,5 +1,3 @@
-import javafx.util.Pair;
-
 import java.io.IOException;
 import java.net.*;
 import java.nio.ByteBuffer;
@@ -13,11 +11,22 @@ public class Server implements Runnable {
 	private InetAddress serverIP;
 	private int serverPort;
 	private AtomicInteger minUnusedLocalID;
-	private Map<String, Pair<String, String>> names;
+	private Map<String, Pair> names;
+	private List<List<String>> arguments;
 
-	public native void cLaunchMethod(String dll, String codeName, String[] args);
+	private class Pair {
+		String first;
+		String second;
+
+		public Pair(String first, String second) {
+			this.first = first;
+			this.second = second;
+		}
+	}
+
+	public native void cLaunchMethod(String dll, String codeName, int call_id);
 	static {
-		System.load("/home/ruslan/Kraken/SummerParallelSchool/dlls/libSample.so");
+		System.load("/home/ruslan/Kraken/SummerParallelSchool/src/Server.so");
 	}
 
 	private enum ConnectionState {
@@ -91,6 +100,7 @@ public class Server implements Runnable {
 
 		minUnusedLocalID = new AtomicInteger(0);
 		names = new HashMap<>();
+		arguments = new LinkedList<>();
 
 		this.serverIP = InetAddress.getByName(ip);
 		this.serverPort = port;
@@ -267,16 +277,19 @@ public class Server implements Runnable {
 					String newName = parsedMessage[shift + 1];
 					String dll = parsedMessage[shift + 2];
 					String codeName = parsedMessage[shift + 3];
-					names.put(newName, new Pair<>(dll, codeName));
+					names.put(newName, new Pair(dll, codeName));
+					break;
 				}
 
 				case "exec": {
 					String newName = parsedMessage[shift + 1];
 
-					String dll = names.get(newName).getKey();
-					String codeName = names.get(newName).getValue();
+					String dll = names.get(newName).first;
+					String codeName = names.get(newName).second;
 					List<String> args = new ArrayList<>(Arrays.asList(parsedMessage).subList(shift + 2, parsedMessage.length));
-					cLaunchMethod(dll, codeName, (String[]) args.toArray());
+					arguments.add(args);
+					int call_id = arguments.size();
+					cLaunchMethod(dll, codeName, call_id);
 					break;
 				}
 

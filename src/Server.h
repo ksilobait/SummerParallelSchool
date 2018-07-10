@@ -10,10 +10,10 @@ extern "C" {
 /*
  * Class:     Server
  * Method:    cLaunchMethod
- * Signature: (Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;)V
+ * Signature: (Ljava/lang/String;Ljava/lang/String;I)V
  */
 JNIEXPORT void JNICALL Java_Server_cLaunchMethod
-  (JNIEnv *, jobject, jstring, jstring, jobjectArray);
+  (JNIEnv *, jobject, jstring, jstring, jint);
 
 #ifdef __cplusplus
 }

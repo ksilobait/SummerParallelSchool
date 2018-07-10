@@ -2,3 +2,17 @@
 \.idea/workspace\.xml
 
 *.class
+
+out
+
+*.so
+
+src/Server_HostInfo\.h
+
+src/Server_GCID\.h
+
+src/Server_ExtendedHostInfo\.h
+
+src/Server_ConnectionState\.h
+
+src/Server_ConnectionInfo\.h
