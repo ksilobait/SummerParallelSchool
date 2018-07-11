@@ -28,10 +28,10 @@ JNIEXPORT void JNICALL Java_Server_cLaunchMethod (JNIEnv* env, jobject obj, jstr
 
     int call_id = (int) num;
     the_function(call_id);
+    printf("\n");
     dlclose(handle);
 }
 
 void main()
 {
-    
 }

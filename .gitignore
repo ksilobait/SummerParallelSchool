@@ -16,3 +16,5 @@ src/Server_ExtendedHostInfo\.h
 src/Server_ConnectionState\.h
 
 src/Server_ConnectionInfo\.h
+
+src/Server_Pair\.h

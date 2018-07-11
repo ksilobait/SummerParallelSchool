@@ -18,7 +18,7 @@ public class Server implements Runnable {
 		String first;
 		String second;
 
-		public Pair(String first, String second) {
+		Pair(String first, String second) {
 			this.first = first;
 			this.second = second;
 		}
