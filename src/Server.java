@@ -13,6 +13,11 @@ public class Server implements Runnable {
 	private AtomicInteger minUnusedLocalID;
 	private Map<String, Pair> names;
 	private List<List<String>> arguments;
+	private DRTS drts;
+
+	int getCount(int call_id) {
+		return arguments.get(call_id).size();
+	}
 
 	private class Pair {
 		String first;
@@ -101,6 +106,7 @@ public class Server implements Runnable {
 		minUnusedLocalID = new AtomicInteger(0);
 		names = new HashMap<>();
 		arguments = new LinkedList<>();
+		this.drts = new DRTS(this);
 
 		this.serverIP = InetAddress.getByName(ip);
 		this.serverPort = port;
@@ -199,6 +205,7 @@ public class Server implements Runnable {
 				}
 				return;
 			}
+
 
 			//not an init message
 
@@ -316,6 +323,7 @@ public class Server implements Runnable {
 				socketChannel.write(buffer);
 			}
 		}
+
 	}
 
 	private void print_hosts(SocketChannel socketChannel) throws IOException {
