@@ -1,5 +1,3 @@
-//import javafx.util.Pair;
-
 import java.io.IOException;
 import java.net.*;
 import java.nio.ByteBuffer;
@@ -13,12 +11,28 @@ public class Server implements Runnable {
 	private InetAddress serverIP;
 	private int serverPort;
 	private AtomicInteger minUnusedLocalID;
-	//private Map<String, Pair<String, String>> names;
+	private Map<String, Pair> names;
+	private List<List<String>> arguments;
+	private DRTS drts;
 
-        /*public native void cLaunchMethod(String dll, String codeName, String[] args);
-        static {
-                System.load("/home/ruslan/Kraken/SummerParallelSchool/src/Server.so");
-        }*/
+	int getCount(int call_id) {
+		return arguments.get(call_id).size();
+	}
+
+	private class Pair {
+		String first;
+		String second;
+
+		Pair(String first, String second) {
+			this.first = first;
+			this.second = second;
+		}
+	}
+
+	public native void cLaunchMethod(String dll, String codeName, int call_id);
+	static {
+		System.load("/home/ruslan/Kraken/SummerParallelSchool/src/Server.so");
+	}
 
 	private enum ConnectionState {
 		UNKNOWN, DEFAULT, SIMPLE, SELF
@@ -90,7 +104,9 @@ public class Server implements Runnable {
 		this.dictionary.add("exec");
 
 		minUnusedLocalID = new AtomicInteger(0);
-		//names = new HashMap<>();
+		names = new HashMap<>();
+		arguments = new LinkedList<>();
+		this.drts = new DRTS(this);
 
 		this.serverIP = InetAddress.getByName(ip);
 		this.serverPort = port;
@@ -190,6 +206,7 @@ public class Server implements Runnable {
 				return;
 			}
 
+
 			//not an init message
 
 			for (ConnectionInfo info : hostsConnections) {
@@ -262,24 +279,26 @@ public class Server implements Runnable {
 					System.exit(0);
 					break;
 
-                                /*// LEVEL 2
-                                case "import": {
-                                        String newName = parsedMessage[shift + 1];
-                                        String dll = parsedMessage[shift + 2];
-                                        String codeName = parsedMessage[shift + 3];
-                                        names.put(newName, new Pair<>(dll, codeName));
-                                        break;
-                                }
+				// LEVEL 2
+				case "import": {
+					String newName = parsedMessage[shift + 1];
+					String dll = parsedMessage[shift + 2];
+					String codeName = parsedMessage[shift + 3];
+					names.put(newName, new Pair(dll, codeName));
+					break;
+				}
 
-                                case "exec": {
-                                        String newName = parsedMessage[shift + 1];
+				case "exec": {
+					String newName = parsedMessage[shift + 1];
 
-                                        String dll = names.get(newName).getKey();
-                                        String codeName = names.get(newName).getValue();
-                                        List<String> args = new ArrayList<>(Arrays.asList(parsedMessage).subList(shift + 2, parsedMessage.length));
-                                        cLaunchMethod(dll, codeName, args.toArray(new String[0]));
-                                        break;
-                                }*/
+					String dll = names.get(newName).first;
+					String codeName = names.get(newName).second;
+					List<String> args = new ArrayList<>(Arrays.asList(parsedMessage).subList(shift + 2, parsedMessage.length));
+					arguments.add(args);
+					int call_id = arguments.size();
+					cLaunchMethod(dll, codeName, call_id);
+					break;
+				}
 
 				default:
 					System.err.println(">>invalid command");
@@ -304,6 +323,7 @@ public class Server implements Runnable {
 				socketChannel.write(buffer);
 			}
 		}
+
 	}
 
 	private void print_hosts(SocketChannel socketChannel) throws IOException {
@@ -468,8 +488,8 @@ public class Server implements Runnable {
 		System.out.println("Please enter your ip and port:");
 		Scanner scanner = new Scanner(System.in);
 		//String ip = scanner.nextLine();
-		String ip = "192.168.12.31";
-		//String ip = "localhost";
+		//String ip = "192.168.12.31";
+		String ip = "localhost";
 		int port = scanner.nextInt();
 		new Server(ip, port);
 	}
