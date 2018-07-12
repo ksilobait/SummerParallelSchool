@@ -8,8 +8,8 @@ JNIEXPORT void JNICALL Java_Server_cLaunchMethod (JNIEnv* env, jobject obj, jstr
     char dll_location[200];
     strcpy(dll_location, "/home/ruslan/Kraken/SummerParallelSchool/src/");
     strcat(dll_location, dll);
-    void* handle = dlopen(dll_location, RTLD_LAZY);
-    
+    void* handle = dlopen(dll_location, RTLD_NOW);
+    printf("%s\n", dll_location);
     if (!handle)
     {
         fprintf(stderr, "dlopen error: %s\n", dlerror());

@@ -4,15 +4,16 @@
 
 int drts_get_count(int call_id, int *count)
 {
+    printf("drts_get_count is here\n");
     JavaVMOption options[1];
     options[0].optionString = "-Djava.class.path=."; //current directory
-    
+
     JavaVMInitArgs vm_args; //initialization arguments for the JVM
     memset(&vm_args, 0, sizeof(vm_args));
     vm_args.version = JNI_VERSION_1_2;
     vm_args.nOptions = 1;
     vm_args.options = options;
-    
+
     JNIEnv* env; //JNI execution environment
     JavaVM* jvm; //pointer to the JVM
     long status = JNI_CreateJavaVM(&jvm, (void**)&env, &vm_args);
@@ -20,10 +21,12 @@ int drts_get_count(int call_id, int *count)
     {
         return -1;
     }
-    
+
     int to_return = -1; //args number
-    
+    printf("1\n");
+
     jclass cls = (*env)->FindClass(env, "DRTS");
+    printf("2\n");
     if (cls != 0)
     {
         jmethodID mid = (*env)->GetMethodID(env, cls, "java_get_count", "(I)I");

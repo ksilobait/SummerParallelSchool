@@ -10,13 +10,17 @@ int c_hello(int id)
     drts_get_count(id, &argc);
     if (argc != 0)
     {
-        drts_error(id, "c_hello: No args expected");
+        printf("c_hello: No args expected\n");
+        //drts_error(id, "c_hello: No args expected");
         return 1;
     }
-    drts_print(id, "Hello, DRTS!");
+    printf("hello DRTS\n");
+    //drts_print(id, "Hello, DRTS!");
     return 0;
 }
 
+
+/*
 int c_init(int id)
 {
     int argc, val;
@@ -69,4 +73,4 @@ int c_show(int id)
     sprintf(buf, "c_show: %d\n", *(int*)df);
     drts_print(id, buf);
     return 0;
-}
+}*/

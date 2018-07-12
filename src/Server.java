@@ -31,7 +31,7 @@ public class Server implements Runnable {
 
 	public native void cLaunchMethod(String dll, String codeName, int call_id);
 	static {
-		System.load("/home/ruslan/Kraken/SummerParallelSchool/src/Server.so");
+		System.load("/home/ruslan/Kraken/SummerParallelSchool/src/libdrts.so");
 	}
 
 	private enum ConnectionState {
