@@ -9,19 +9,16 @@ JNIEXPORT void JNICALL Java_Server_cLaunchMethod (JNIEnv* env, jobject obj, jstr
     strcpy(dll_location, "/home/ruslan/Kraken/SummerParallelSchool/src/");
     strcat(dll_location, dll);
     void* handle = dlopen(dll_location, RTLD_LAZY);
-    printf("1\n");
     
     if (!handle)
     {
         fprintf(stderr, "dlopen error: %s\n", dlerror());
         return;
     }
-    printf("2\n");
     
     void (*the_function)(int);
     const char* codeName = (*env)->GetStringUTFChars(env, string2, 0);
     *(void**)(&the_function) = dlsym(handle, codeName);
-    printf("3 %s\n", codeName);
     
     if (!the_function)
     {
@@ -31,13 +28,8 @@ JNIEXPORT void JNICALL Java_Server_cLaunchMethod (JNIEnv* env, jobject obj, jstr
         return;
     }
 
-    printf("I'm here!!!\n");
     int call_id = (int) num;
     the_function(call_id);
     printf("\n");
     dlclose(handle);
-}
-
-void main()
-{
 }

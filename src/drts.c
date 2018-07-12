@@ -36,8 +36,3 @@ int drts_get_count(int call_id, int *count)
     (*jvm)->DestroyJavaVM(jvm);
     return to_return;
 }
-
-int main()
-{
-    return 0;
-}
